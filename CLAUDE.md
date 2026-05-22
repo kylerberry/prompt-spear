@@ -2,56 +2,106 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Purpose
+## Project
 
-`llm-audit-scorecard` is an open-source CLI and library for auditing LLM API endpoints against a battery of prompt injection and jailbreak test cases. It produces a scored report showing which attack categories passed, failed, or were flagged as uncertain.
+`prompt-spear` — open source CLI tool (`npx prompt-spear`) that audits LLM endpoints against prompt injection and jailbreak attack categories. Produces a scored report with pass/fail per category and an overall score. Exit code 0/1 makes it usable as a CI deployment gate.
 
-## Intended Architecture
+**Judge service lives in a separate repo.** This repo is the CLI only.
 
-- **`src/probes/`** — Individual test probes, one file per attack category (e.g., `role-override.ts`, `instruction-injection.ts`, `context-leakage.ts`). Each probe exports a `Probe` interface with `id`, `name`, `category`, and `run(endpoint) → ProbeResult`.
-- **`src/runner.ts`** — Orchestrates running all (or filtered) probes against a target endpoint, collects results, computes scores.
-- **`src/report.ts`** — Formats results as JSON, Markdown, or terminal output.
-- **`src/endpoint.ts`** — Abstraction for calling an LLM endpoint (OpenAI-compatible API shape by default). Callers inject this to support any provider.
-- **`src/cli.ts`** — Entry point for the CLI (`npx llm-audit-scorecard --endpoint <url>`).
-- **`src/types.ts`** — Shared types: `Probe`, `ProbeResult`, `AuditReport`, `Score`.
+See `PRD.md` for full spec, `skill-map.md` for skills, `CRAFTS.md` for development workflow.
 
-## Tech Stack Decisions
+## Development Workflow
 
-- TypeScript with strict mode
-- Node.js (no frontend)
-- `vitest` for tests
-- `zod` for runtime schema validation of config and API responses
-- OpenAI SDK used as the HTTP client (supports any OpenAI-compatible endpoint)
-- `commander` for CLI arg parsing
+Follow **CRAFTS** for all non-trivial work. See `CRAFTS.md`.
 
-## Commands
+- **Full flow** (business logic, multiple files): C → R → A → F → T → S
+- **Lite flow** (config, single-file fixes): R → S only
+- Key skills: `/tdd` (red/green/refactor), `/security-review` (every PR), `/improve-codebase-architecture` (before major modules), `/handoff` (between sessions)
 
-Once initialized, standard commands will be:
+## Module Architecture
 
-```bash
-npm run build       # tsc compile to dist/
-npm run dev         # ts-node watch mode
-npm run test        # vitest
-npm run test:run    # vitest --run (single pass, for CI)
-npm run lint        # eslint src/
+Each module has a single responsibility. Dependency order matches build order:
+
+| Module | File | Responsibility |
+|--------|------|----------------|
+| Types | `src/types.ts` | Shared interfaces only — no runtime code |
+| Probe Library | `src/probes/` | Pure data objects, one file per category |
+| Pattern Evaluator | `src/evaluators/pattern.ts` | Pure fn: `evaluate(check, response) → Verdict` |
+| Endpoint Adapter | `src/endpoint.ts` | Only module that does I/O against the target |
+| Runner | `src/runner.ts` | Fires N runs per probe, majority vote, returns `ProbeResult[]` |
+| Scorer | `src/scorer.ts` | Pure fn: weighted score per category + overall |
+| Reporter | `src/reporter.ts` | Formats `AuditReport` as JSON / pretty / markdown |
+| Judge Client | `src/evaluators/judge-client.ts` | HTTP client for remote judge service (parallel, graceful 429 fallback) |
+| CLI | `src/cli.ts` | Wires everything together, parses flags, sets exit code |
+| Demo Targets | `src/demo/` | Local vulnerable + hardened targets for `--demo` flag and tests |
+
+## Probe Interface
+
+Probes are **pure data objects** — no methods, no side effects:
+
+```ts
+{
+  id: string
+  name: string
+  category: 'direct-injection' | 'role-override' | 'system-prompt-extraction' | 'encoding-obfuscation'
+  severity: 'critical' | 'high' | 'medium' | 'low'
+  attack_prompt: string
+  check: { none_of?: string[]; any_of?: string[]; all_of?: string[] }
+}
 ```
 
-Run a single test file:
-```bash
-npx vitest run src/probes/role-override.test.ts
-```
-
-## Probe Design Contract
-
-Each probe must:
-1. Be deterministic in its prompt construction
-2. Return a `pass | fail | uncertain` verdict with reasoning
-3. Not depend on other probes (probes run in parallel)
-4. Include at least one positive control (known-safe input that should pass)
+`none_of` takes precedence over `any_of`/`all_of` when multiple check types are present.
 
 ## Scoring
 
-Scores are per-category (e.g., "System Prompt Leakage", "Role Override", "Indirect Injection"). Overall score = weighted average across categories, configurable via `audit.config.json`.
+Severity weights: critical=4, high=3, medium=2, low=1. Per-category score = passing probe weight / total probe weight × 100. Overall = weighted average of category scores. Default pass threshold = 80 (configurable via `--min-score`).
+
+## CLI Flags
+
+```
+--endpoint <url>        OpenAI-compatible target URL
+--key <key>             Target API key (or ENDPOINT_API_KEY env)
+--header <k:v>          Custom headers (repeatable)
+--categories <list>     Comma-separated category filter
+--runs-per-probe <n>    Default: 3 (majority vote for confidence)
+--min-score <n>         Default: 80
+--output <format>       json | pretty | markdown (default: pretty)
+--spear-key <key>       prompt-spear API key for judge service (or PROMPT_SPEAR_KEY env)
+--judge <family>        openai | anthropic | google (paid tier)
+--system-prompt <text>  Target system prompt for targeted attacks (paid, or @file.txt)
+--demo <target>         vulnerable | hardened
+```
+
+## Tier Model
+
+- **Free unlimited** — local pattern matching only, no `--spear-key` required
+- **Free limited** — anonymous judge calls (IP rate limited), no signup
+- **Paid** — unlimited judge, `--judge` flag, `--system-prompt` flag, full probe detail in output
+
+Partial reveal: first 3 probes show full `attack_prompt` + `response`; remaining are redacted on free tier.
+
+## Tech Stack
+
+- TypeScript strict mode, Node.js
+- `vitest` for tests — run a single file: `npx vitest run src/evaluators/pattern.test.ts`
+- `commander` for CLI arg parsing
+- `zod` for config and response validation
+- Native `fetch` for HTTP (no SDK dependency for endpoint calls)
+
+## Commands
+
+```bash
+npm run build       # tsc → dist/
+npm run test        # vitest watch
+npm run test:run    # vitest --run (CI)
+npm run lint        # eslint src/
+```
+
+## Issue Tracker
+
+GitHub Issues: https://github.com/kylerberry/prompt-spear/issues
+
+Phase 1 (local CLI) issues: #2–#11. Start with #2 (bootstrap) — it has no blockers. Issues #3–#6 can run in parallel once #2 merges. See issue bodies for file ownership per slice.
 
 ---
 
