@@ -11,7 +11,6 @@ Skills selected for prompt-spear. Only skills with a clear mapping to at least o
 | `security-review` | built-in | Security audit of diffs. Use during CRAFTS Tighten phase on every PR. | built-in |
 | `security-scan` | — | Automated security scanning. Use on every PR touching the CLI key handling or judge client. | built-in |
 | `handoff` | 61.5K | Agent session handoff — packages context for the next agent when a task spans sessions. Use when handing off between Phase 1 waves. | mattpocock/skills |
-| `skrillz:tdd-workflow` | — | Extended TDD workflow with CI integration. Companion to `tdd` for the runner and scorer modules. | skrillz |
 | `skrillz:anthropic-expert` | — | Deep Anthropic API patterns. Use when authoring probe check patterns and understanding model behavior for edge case coverage. | skrillz |
 | `codex:rescue` | — | Second-pass implementation when stuck. Use if an agent gets blocked on the multi-turn context manipulation probes (Issue #24) or the arbitrary HTTP adapter DSL (Issue #25). | codex plugin |
 
@@ -19,8 +18,8 @@ Skills selected for prompt-spear. Only skills with a clear mapping to at least o
 
 | Domain | Skills |
 |--------|--------|
-| **CLI + Runner** (`src/cli.ts`, `src/runner.ts`) | `tdd`, `skrillz:tdd-workflow`, `handoff`, `security-review` |
-| **Probe Library + Evaluators** (`src/probes/`, `src/evaluators/`) | `tdd`, `skrillz:tdd-workflow`, `skrillz:anthropic-expert` |
+| **CLI + Runner** (`src/cli.ts`, `src/runner.ts`) | `tdd`, `handoff`, `security-review` |
+| **Probe Library + Evaluators** (`src/probes/`, `src/evaluators/`) | `tdd`, `skrillz:anthropic-expert` |
 | **Judge Client** (`src/evaluators/judge-client.ts`) | `tdd`, `security-review`, `security-scan` |
 | **Cross-cutting** | `improve-codebase-architecture`, `handoff`, `codex:rescue` |
 
