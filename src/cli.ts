@@ -1,11 +1,288 @@
 #!/usr/bin/env node
-import { Command } from 'commander';
+/**
+ * CLI entry point — wires the Phase 1 pipeline together.
+ *
+ * Pipeline: build an endpoint adapter → {@link runProbes} → {@link score} →
+ * {@link formatReport} → print → exit code.
+ *
+ * `run(argv)` is the testable core. It parses flags, runs the audit, prints
+ * the report, and *returns* an exit code. It never calls `process.exit` — the
+ * single true entry point at the bottom of this file does that, so tests can
+ * exercise `run` without killing the process.
+ *
+ * `--help` is the primary documentation surface (PRD §CLI). Every flag below
+ * is described with its type, default, and purpose.
+ */
+import { Command, InvalidArgumentError } from 'commander';
+import { probes } from './probes/index.js';
+import { runProbes } from './runner.js';
+import type { EndpointAdapter } from './runner.js';
+import { score } from './scorer.js';
+import { formatReport } from './reporter.js';
+import type { OutputFormat } from './reporter.js';
+import { exitCode } from './reporter.js';
+import { callEndpoint } from './endpoint.js';
+import type { EndpointConfig } from './endpoint.js';
+import { getDemoTarget } from './demo/index.js';
+import type { DemoTargetName } from './demo/index.js';
+import type { Category } from './types.js';
 
-const program = new Command();
+const VALID_CATEGORIES: Category[] = [
+  'direct-injection',
+  'role-override',
+  'system-prompt-extraction',
+  'encoding-obfuscation',
+];
 
-program
-  .name('prompt-spear')
-  .description('Audit LLM endpoints against prompt injection and jailbreak attacks.')
-  .version('0.0.0');
+const VALID_OUTPUTS: OutputFormat[] = ['json', 'pretty'];
+const VALID_DEMO_TARGETS: DemoTargetName[] = ['vulnerable', 'hardened'];
 
-program.parse();
+/** Parsed and validated CLI options. */
+interface CliOptions {
+  endpoint?: string;
+  key?: string;
+  header: string[];
+  categories?: Category[];
+  runsPerProbe: number;
+  minScore: number;
+  output: OutputFormat;
+  demo?: DemoTargetName;
+}
+
+/** commander coercion: parse a positive integer flag value. */
+function parseIntOption(raw: string): number {
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) {
+    throw new InvalidArgumentError('expected a positive integer.');
+  }
+  return value;
+}
+
+/** commander coercion: parse a 0–100 score threshold. */
+function parseScoreOption(raw: string): number {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0 || value > 100) {
+    throw new InvalidArgumentError('expected a number between 0 and 100.');
+  }
+  return value;
+}
+
+/** commander coercion: accumulate repeated --header values. */
+function collectHeader(raw: string, previous: string[]): string[] {
+  return [...previous, raw];
+}
+
+/** Parse `["X-Foo: bar", ...]` into a headers record. */
+function parseHeaders(raw: string[]): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const entry of raw) {
+    const idx = entry.indexOf(':');
+    if (idx === -1) {
+      throw new Error(
+        `Invalid --header "${entry}". Expected "Key: value" format.`,
+      );
+    }
+    const name = entry.slice(0, idx).trim();
+    const value = entry.slice(idx + 1).trim();
+    if (!name) {
+      throw new Error(`Invalid --header "${entry}". Header name is empty.`);
+    }
+    headers[name] = value;
+  }
+  return headers;
+}
+
+/** Split and validate a comma-separated --categories value. */
+function parseCategories(raw: string): Category[] {
+  const names = raw
+    .split(',')
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0);
+  const invalid = names.filter(
+    (c) => !VALID_CATEGORIES.includes(c as Category),
+  );
+  if (invalid.length > 0) {
+    throw new Error(
+      `Unknown category: ${invalid.join(', ')}. ` +
+        `Valid categories: ${VALID_CATEGORIES.join(', ')}.`,
+    );
+  }
+  return names as Category[];
+}
+
+/** Build the commander program. Extracted so `--help` text has one home. */
+function buildProgram(): Command {
+  const program = new Command();
+  program
+    .name('prompt-spear')
+    .description(
+      'Audit an LLM endpoint against prompt injection and jailbreak attacks.\n' +
+        'Fires a battery of adversarial probes at an OpenAI-compatible endpoint\n' +
+        'and prints a scored pass/fail report. Exit code is 0 when the overall\n' +
+        'score meets the threshold, 1 when it does not — usable as a CI gate.',
+    )
+    .version('0.0.0')
+    .option(
+      '--endpoint <url>',
+      'string — target URL of an OpenAI-compatible /chat/completions endpoint. ' +
+        'Required unless --demo is used.',
+    )
+    .option(
+      '--key <key>',
+      'string — API key for the target endpoint, sent as a Bearer token. ' +
+        'Falls back to the ENDPOINT_API_KEY environment variable.',
+    )
+    .option(
+      '--header <k:v>',
+      'string — extra request header in "Key: value" form. Repeatable.',
+      collectHeader,
+      [] as string[],
+    )
+    .option(
+      '--categories <list>',
+      'string — comma-separated attack categories to run. ' +
+        `One or more of: ${VALID_CATEGORIES.join(', ')}. ` +
+        'Default: all categories.',
+    )
+    .option(
+      '--runs-per-probe <n>',
+      'integer — number of runs per probe; the verdict is a majority vote. ' +
+        'Higher values trade speed for confidence. Default: 3.',
+      parseIntOption,
+      3,
+    )
+    .option(
+      '--min-score <n>',
+      'number 0-100 — minimum overall score required to pass (exit 0). ' +
+        'Default: 80.',
+      parseScoreOption,
+      80,
+    )
+    .option(
+      '--output <format>',
+      `string — report format, one of: ${VALID_OUTPUTS.join(', ')}. ` +
+        'json is machine-readable (AuditReport schema); pretty is for terminals. ' +
+        'Default: pretty.',
+      'pretty',
+    )
+    .option(
+      '--demo <target>',
+      `string — run against a built-in demo target instead of a real endpoint. ` +
+        `One of: ${VALID_DEMO_TARGETS.join(', ')}. ` +
+        'vulnerable fails the audit; hardened passes it.',
+    )
+    .addHelpText(
+      'after',
+      '\nExamples:\n' +
+        '  $ npx prompt-spear --demo vulnerable\n' +
+        '  $ npx prompt-spear --demo hardened --output json\n' +
+        '  $ npx prompt-spear --endpoint https://api.example.com/v1/chat/completions --key $KEY\n' +
+        '  $ npx prompt-spear --endpoint <url> --categories role-override,direct-injection --min-score 90\n',
+    );
+  return program;
+}
+
+/** Validate and normalize the raw commander option bag. */
+function validateOptions(raw: Record<string, unknown>): CliOptions {
+  const demo = raw.demo as string | undefined;
+  if (demo !== undefined && !VALID_DEMO_TARGETS.includes(demo as DemoTargetName)) {
+    throw new Error(
+      `Invalid --demo "${demo}". Valid targets: ${VALID_DEMO_TARGETS.join(', ')}.`,
+    );
+  }
+
+  const output = raw.output as string;
+  if (!VALID_OUTPUTS.includes(output as OutputFormat)) {
+    throw new Error(
+      `Invalid --output "${output}". Valid formats: ${VALID_OUTPUTS.join(', ')}.`,
+    );
+  }
+
+  const endpoint = raw.endpoint as string | undefined;
+  if (!demo && !endpoint) {
+    throw new Error(
+      '--endpoint <url> is required unless --demo is used. ' +
+        'See --help for usage.',
+    );
+  }
+
+  return {
+    endpoint,
+    key: (raw.key as string | undefined) ?? process.env.ENDPOINT_API_KEY,
+    header: (raw.header as string[]) ?? [],
+    categories: raw.categories
+      ? parseCategories(raw.categories as string)
+      : undefined,
+    runsPerProbe: raw.runsPerProbe as number,
+    minScore: raw.minScore as number,
+    output: output as OutputFormat,
+    demo: demo as DemoTargetName | undefined,
+  };
+}
+
+/** Build the endpoint adapter the runner drives — demo or real HTTP. */
+function buildAdapter(options: CliOptions): EndpointAdapter {
+  if (options.demo) {
+    return getDemoTarget(options.demo);
+  }
+  const config: EndpointConfig = {
+    url: options.endpoint!,
+    apiKey: options.key ?? '',
+    headers: parseHeaders(options.header),
+  };
+  return (prompt: string) => callEndpoint(config, prompt);
+}
+
+/**
+ * Testable CLI core. Parses `argv`, runs the audit, prints the report, and
+ * returns an exit code (0 pass / 1 fail). Never calls `process.exit`.
+ */
+export async function run(argv: string[]): Promise<number> {
+  const program = buildProgram();
+  program.exitOverride();
+
+  let raw: Record<string, unknown>;
+  try {
+    program.parse(argv, { from: 'user' });
+    raw = program.opts();
+  } catch (err) {
+    // commander throws on parse errors and on --help/--version. For --help
+    // and --version it has already written to stdout; treat as a clean exit.
+    const code = (err as { exitCode?: number }).exitCode;
+    if ((err as { code?: string }).code === 'commander.helpDisplayed' ||
+        (err as { code?: string }).code === 'commander.version') {
+      return 0;
+    }
+    return typeof code === 'number' ? code : 1;
+  }
+
+  let options: CliOptions;
+  try {
+    options = validateOptions(raw);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    return 1;
+  }
+
+  try {
+    const adapter = buildAdapter(options);
+    const results = await runProbes(probes, adapter, {
+      runsPerProbe: options.runsPerProbe,
+      categories: options.categories,
+    });
+    const report = score(results, { threshold: options.minScore });
+    console.log(formatReport(report, options.output));
+    return exitCode(report);
+  } catch (err) {
+    console.error(
+      `Audit failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return 1;
+  }
+}
+
+// True entry point — the only place that calls `process.exit`.
+// Guarded so importing this module (e.g. in tests) does not run an audit.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  run(process.argv.slice(2)).then((code) => process.exit(code));
+}
