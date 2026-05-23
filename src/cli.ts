@@ -16,7 +16,7 @@
 import { Command, InvalidArgumentError } from 'commander';
 import { probes } from './probes/index.js';
 import { runProbes } from './runner.js';
-import type { EndpointAdapter, ProbeProgressCallback } from './runner.js';
+import type { EndpointAdapter, ProbeProgressCallback, RunErrorCallback } from './runner.js';
 import { score } from './scorer.js';
 import { formatReport } from './reporter.js';
 import type { OutputFormat } from './reporter.js';
@@ -298,6 +298,15 @@ export async function run(argv: string[]): Promise<number> {
     );
   }
 
+  const onRunError: RunErrorCallback | undefined = options.verbose
+    ? (probe, run, total, err) => {
+        const reason = err instanceof Error ? err.message : String(err);
+        process.stderr.write(
+          `         !  ${probe.category}/${probe.id} run ${run}/${total} failed: ${reason}\n`,
+        );
+      }
+    : undefined;
+
   const onRetry: OnRetryCallback | undefined = options.verbose
     ? (attempt, maxRetries, delayMs) => {
         process.stderr.write(
@@ -333,6 +342,7 @@ export async function run(argv: string[]): Promise<number> {
       concurrency: options.concurrency,
       categories: options.categories,
       onProbeComplete,
+      onRunError,
     });
     const report = score(results, { threshold: options.minScore });
     console.log(formatReport(report, options.output));

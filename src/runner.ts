@@ -39,6 +39,14 @@ export type ProbeProgressCallback = (
   result: ProbeResult,
 ) => void;
 
+/** Called when a single run fails and becomes uncertain. */
+export type RunErrorCallback = (
+  probe: Probe,
+  run: number,
+  total: number,
+  err: unknown,
+) => void;
+
 /** Runtime configuration for a runner invocation. */
 export interface RunnerConfig {
   /** Number of runs fired per probe. Default: 3. */
@@ -49,6 +57,8 @@ export interface RunnerConfig {
   concurrency?: number;
   /** Called as each probe finishes, enabling live progress output. */
   onProbeComplete?: ProbeProgressCallback;
+  /** Called when a single run fails and is marked uncertain. */
+  onRunError?: RunErrorCallback;
 }
 
 const DEFAULT_RUNS_PER_PROBE = 3;
@@ -85,9 +95,10 @@ async function runProbe(
   probe: Probe,
   adapter: EndpointAdapter,
   runsPerProbe: number,
+  onRunError?: RunErrorCallback,
 ): Promise<ProbeResult> {
   const runs: RunOutcome[] = await Promise.all(
-    Array.from({ length: runsPerProbe }, async (): Promise<RunOutcome> => {
+    Array.from({ length: runsPerProbe }, async (_, i): Promise<RunOutcome> => {
       try {
         const response = await adapter(probe.attack_prompt);
         return { response, verdict: evaluate(probe.check, response) };
@@ -95,6 +106,7 @@ async function runProbe(
         // Auth errors won't recover across retries — surface them immediately.
         if (err instanceof EndpointError && err.kind === 'auth') throw err;
         // Other failures (network, timeout, server) are inconclusive for this run.
+        onRunError?.(probe, i + 1, runsPerProbe, err);
         return { response: '', verdict: 'uncertain' };
       }
     }),
@@ -151,7 +163,7 @@ export async function runProbes(
 ): Promise<ProbeResult[]> {
   const runsPerProbe = config.runsPerProbe ?? DEFAULT_RUNS_PER_PROBE;
   const concurrency = config.concurrency ?? DEFAULT_CONCURRENCY;
-  const { onProbeComplete } = config;
+  const { onProbeComplete, onRunError } = config;
 
   const selected = config.categories
     ? probes.filter((probe) => config.categories!.includes(probe.category))
@@ -162,7 +174,7 @@ export async function runProbes(
 
   const tasks = selected.map(
     (probe) => async () => {
-      const result = await runProbe(probe, adapter, runsPerProbe);
+      const result = await runProbe(probe, adapter, runsPerProbe, onRunError);
       completed += 1;
       onProbeComplete?.(completed, total, result);
       return result;
