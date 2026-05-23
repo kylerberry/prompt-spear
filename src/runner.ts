@@ -32,15 +32,50 @@ import { EndpointError } from './endpoint.js';
 /** Endpoint adapter shape — matches `callEndpoint` bound to a config. */
 export type EndpointAdapter = (prompt: string) => Promise<string>;
 
+/** Called after each probe completes, in arrival order. */
+export type ProbeProgressCallback = (
+  completed: number,
+  total: number,
+  result: ProbeResult,
+) => void;
+
 /** Runtime configuration for a runner invocation. */
 export interface RunnerConfig {
   /** Number of runs fired per probe. Default: 3. */
   runsPerProbe?: number;
   /** Optional category allow-list. When set, only matching probes run. */
   categories?: Category[];
+  /** Max number of probes running concurrently. Default: 5. */
+  concurrency?: number;
+  /** Called as each probe finishes, enabling live progress output. */
+  onProbeComplete?: ProbeProgressCallback;
 }
 
 const DEFAULT_RUNS_PER_PROBE = 3;
+const DEFAULT_CONCURRENCY = 5;
+
+/**
+ * Run tasks with a concurrency cap. Resolves in completion order, not input
+ * order — callers must not depend on the returned array ordering.
+ */
+async function withConcurrency<T>(
+  tasks: Array<() => Promise<T>>,
+  limit: number,
+): Promise<T[]> {
+  const results: T[] = [];
+  let next = 0;
+
+  async function worker(): Promise<void> {
+    while (next < tasks.length) {
+      const i = next++;
+      results.push(await tasks[i]!());
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, tasks.length) }, worker);
+  await Promise.all(workers);
+  return results;
+}
 
 /**
  * Run a single probe `runsPerProbe` times in parallel and aggregate the
@@ -115,12 +150,24 @@ export async function runProbes(
   config: RunnerConfig = {},
 ): Promise<ProbeResult[]> {
   const runsPerProbe = config.runsPerProbe ?? DEFAULT_RUNS_PER_PROBE;
+  const concurrency = config.concurrency ?? DEFAULT_CONCURRENCY;
+  const { onProbeComplete } = config;
 
   const selected = config.categories
     ? probes.filter((probe) => config.categories!.includes(probe.category))
     : probes;
 
-  return Promise.all(
-    selected.map((probe) => runProbe(probe, adapter, runsPerProbe)),
+  const total = selected.length;
+  let completed = 0;
+
+  const tasks = selected.map(
+    (probe) => async () => {
+      const result = await runProbe(probe, adapter, runsPerProbe);
+      completed += 1;
+      onProbeComplete?.(completed, total, result);
+      return result;
+    },
   );
+
+  return withConcurrency(tasks, concurrency);
 }

@@ -16,7 +16,7 @@
 import { Command, InvalidArgumentError } from 'commander';
 import { probes } from './probes/index.js';
 import { runProbes } from './runner.js';
-import type { EndpointAdapter } from './runner.js';
+import type { EndpointAdapter, ProbeProgressCallback } from './runner.js';
 import { score } from './scorer.js';
 import { formatReport } from './reporter.js';
 import type { OutputFormat } from './reporter.js';
@@ -44,9 +44,11 @@ interface CliOptions {
   header: string[];
   categories?: Category[];
   runsPerProbe: number;
+  concurrency: number;
   minScore: number;
   output: OutputFormat;
   demo?: DemoTargetName;
+  verbose: boolean;
 }
 
 /** commander coercion: parse a positive integer flag value. */
@@ -152,6 +154,13 @@ function buildProgram(): Command {
       3,
     )
     .option(
+      '--concurrency <n>',
+      'integer — max number of probes running in parallel. ' +
+        'Lower values reduce rate-limit risk. Default: 5.',
+      parseIntOption,
+      5,
+    )
+    .option(
       '--min-score <n>',
       'number 0-100 — minimum overall score required to pass (exit 0). ' +
         'Default: 80.',
@@ -170,6 +179,11 @@ function buildProgram(): Command {
       `string — run against a built-in demo target instead of a real endpoint. ` +
         `One of: ${VALID_DEMO_TARGETS.join(', ')}. ` +
         'vulnerable fails the audit; hardened passes it.',
+    )
+    .option(
+      '--verbose',
+      'stream a result line to stderr for each probe as it completes.',
+      false,
     )
     .addHelpText(
       'after',
@@ -214,9 +228,11 @@ function validateOptions(raw: Record<string, unknown>): CliOptions {
       ? parseCategories(raw.categories as string)
       : undefined,
     runsPerProbe: raw.runsPerProbe as number,
+    concurrency: raw.concurrency as number,
     minScore: raw.minScore as number,
     output: output as OutputFormat,
     demo: demo as DemoTargetName | undefined,
+    verbose: raw.verbose as boolean,
   };
 }
 
@@ -271,11 +287,33 @@ export async function run(argv: string[]): Promise<number> {
     );
   }
 
+  const onProbeComplete: ProbeProgressCallback | undefined = options.verbose
+    ? (completed, total, result) => {
+        const icon = result.verdict === 'pass' ? '✓' : result.verdict === 'fail' ? '✗' : '?';
+        const label = `${result.probe.category}/${result.probe.id}`;
+        const num = `${completed}/${total}`.padStart(6);
+        process.stderr.write(
+          `${num}  ${icon}  ${label.padEnd(45)}  ${result.verdict.padEnd(9)}  ${result.confidence}\n`,
+        );
+      }
+    : undefined;
+
+  if (options.verbose) {
+    const totalProbes = probes.filter(
+      (p) => !options.categories || options.categories!.includes(p.category),
+    ).length;
+    process.stderr.write(
+      `Probing ${totalProbes} probes (${options.runsPerProbe} runs each, concurrency ${options.concurrency})...\n`,
+    );
+  }
+
   try {
     const adapter = buildAdapter(options);
     const results = await runProbes(probes, adapter, {
       runsPerProbe: options.runsPerProbe,
+      concurrency: options.concurrency,
       categories: options.categories,
+      onProbeComplete,
     });
     const report = score(results, { threshold: options.minScore });
     console.log(formatReport(report, options.output));
