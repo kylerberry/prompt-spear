@@ -76,7 +76,7 @@ function classifyStatus(status: number): EndpointErrorKind {
 }
 
 /** Exponential backoff delay with ±25% jitter. */
-function backoffDelay(attempt: number): number {
+export function backoffDelay(attempt: number): number {
   const base = 1000 * Math.pow(2, attempt);
   return Math.round(base * (0.75 + Math.random() * 0.5));
 }

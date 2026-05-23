@@ -23,6 +23,8 @@ import type { OutputFormat } from './reporter.js';
 import { exitCode } from './reporter.js';
 import { callEndpoint, EndpointError } from './endpoint.js';
 import type { EndpointConfig, OnRetryCallback } from './endpoint.js';
+import { callWebhook } from './webhook.js';
+import type { WebhookConfig } from './webhook.js';
 import { getDemoTarget } from './demo/index.js';
 import type { DemoTargetName } from './demo/index.js';
 import type { Category } from './types.js';
@@ -50,6 +52,8 @@ interface CliOptions {
   output: OutputFormat;
   demo?: DemoTargetName;
   verbose: boolean;
+  promptField?: string;
+  responseField?: string;
 }
 
 /** commander coercion: parse a positive integer flag value. */
@@ -189,6 +193,16 @@ function buildProgram(): Command {
         'vulnerable fails the audit; hardened passes it.',
     )
     .option(
+      '--prompt-field <key>',
+      'string — for plain JSON webhooks: body field that receives the attack prompt ' +
+        '(e.g. "message", "input"). When set, skips the OpenAI request format.',
+    )
+    .option(
+      '--response-field <key>',
+      'string — for plain JSON webhooks: top-level response field containing the reply ' +
+        '(e.g. "response", "output"). Required when --prompt-field is set.',
+    )
+    .option(
       '--verbose',
       'stream a result line to stderr for each probe as it completes.',
       false,
@@ -228,6 +242,15 @@ function validateOptions(raw: Record<string, unknown>): CliOptions {
     );
   }
 
+  const promptField = raw.promptField as string | undefined;
+  const responseField = raw.responseField as string | undefined;
+  if (promptField && !responseField) {
+    throw new Error('--response-field <key> is required when --prompt-field is set.');
+  }
+  if (responseField && !promptField) {
+    throw new Error('--prompt-field <key> is required when --response-field is set.');
+  }
+
   return {
     endpoint,
     key: (raw.key as string | undefined) ?? process.env.ENDPOINT_API_KEY,
@@ -242,21 +265,35 @@ function validateOptions(raw: Record<string, unknown>): CliOptions {
     output: output as OutputFormat,
     demo: demo as DemoTargetName | undefined,
     verbose: raw.verbose as boolean,
+    promptField,
+    responseField,
   };
 }
 
-/** Build the endpoint adapter the runner drives — demo or real HTTP. */
+/** Build the endpoint adapter the runner drives — demo, webhook, or OpenAI. */
 function buildAdapter(options: CliOptions, onRetry?: OnRetryCallback): EndpointAdapter {
   if (options.demo) {
     return getDemoTarget(options.demo);
   }
-  const config: EndpointConfig = {
+
+  const shared = {
     url: options.endpoint!,
     apiKey: options.key ?? '',
     headers: parseHeaders(options.header),
     maxRetries: options.maxRetries,
     onRetry,
   };
+
+  if (options.promptField && options.responseField) {
+    const config: WebhookConfig = {
+      ...shared,
+      promptField: options.promptField,
+      responseField: options.responseField,
+    };
+    return (prompt: string) => callWebhook(config, prompt);
+  }
+
+  const config: EndpointConfig = shared;
   return (prompt: string) => callEndpoint(config, prompt);
 }
 
