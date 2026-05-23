@@ -7,6 +7,12 @@
  * is executed directly) is the one place that calls `process.exit`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
+  return { ...actual, writeFileSync: vi.fn() };
+});
+
 import { run } from './cli.js';
 import type { AuditReport } from './types.js';
 
