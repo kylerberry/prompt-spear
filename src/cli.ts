@@ -194,10 +194,9 @@ function buildProgram(): Command {
         'vulnerable fails the audit; hardened passes it.',
     )
     .option(
-      '--request-template <path|json>',
-      'string — body template for non-OpenAI webhooks. Use @file.json to load from a file ' +
-        'or pass inline JSON. Include {{prompt}} where the attack text should go. ' +
-        'e.g. @payload.json or \'{"message":"{{prompt}}"}\'',
+      '--request-template <file>',
+      'string — path to a JSON body template file for non-OpenAI webhooks. ' +
+        'Include {{prompt}} where the attack text should go. e.g. payload.json',
     )
     .option(
       '--verbose',
@@ -211,8 +210,7 @@ function buildProgram(): Command {
         '  $ npx prompt-spear --demo hardened --output json\n' +
         '  $ npx prompt-spear --endpoint https://api.example.com/v1/chat/completions --key $KEY\n' +
         '  $ npx prompt-spear --endpoint <url> --categories role-override,direct-injection --min-score 90\n' +
-        '  $ npx prompt-spear --endpoint <url> --request-template @payload.json --key $KEY\n' +
-        '  $ npx prompt-spear --endpoint <url> --request-template \'{"message":"{{prompt}}"}\'  --key $KEY\n',
+        '  $ npx prompt-spear --endpoint <url> --request-template payload.json --key $KEY\n',
     );
   return program;
 }
@@ -259,17 +257,14 @@ function validateOptions(raw: Record<string, unknown>): CliOptions {
   };
 }
 
-/** Load a request template from @file path or return the string as-is. */
-function resolveTemplate(value: string): string {
-  if (value.startsWith('@')) {
-    try {
-      return readFileSync(value.slice(1), 'utf8');
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      throw new Error(`Could not read request template file: ${detail}`);
-    }
+/** Read a request template from a file path. */
+function resolveTemplate(filePath: string): string {
+  try {
+    return readFileSync(filePath, 'utf8');
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`Could not read request template file: ${detail}`);
   }
-  return value;
 }
 
 /** Build the endpoint adapter the runner drives — demo, webhook, or OpenAI. */
