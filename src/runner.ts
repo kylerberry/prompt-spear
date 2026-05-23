@@ -77,6 +77,7 @@ async function withConcurrency<T>(
 
   async function worker(): Promise<void> {
     while (next < tasks.length) {
+      // JS is single-threaded: read + increment is atomic — no race between workers.
       const i = next++;
       results.push(await tasks[i]!());
     }

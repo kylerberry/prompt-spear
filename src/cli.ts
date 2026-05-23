@@ -62,11 +62,13 @@ function timestamp(): string {
   return new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
 }
 
-/** commander coercion: parse a positive integer flag value. */
-function parseIntOption(raw: string): number {
+/** commander coercion: parse an integer flag value with a minimum bound. */
+function parseIntOption(raw: string, min = 1): number {
   const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1) {
-    throw new InvalidArgumentError('expected a positive integer.');
+  if (!Number.isInteger(value) || value < min) {
+    throw new InvalidArgumentError(
+      min <= 0 ? 'expected a non-negative integer.' : 'expected a positive integer.',
+    );
   }
   return value;
 }
@@ -161,21 +163,21 @@ function buildProgram(): Command {
       '--runs-per-probe <n>',
       'integer — number of runs per probe; the verdict is a majority vote. ' +
         'Higher values trade speed for confidence. Default: 3.',
-      parseIntOption,
+      (raw) => parseIntOption(raw),
       3,
     )
     .option(
       '--concurrency <n>',
       'integer — max number of probes running in parallel. ' +
         'Lower values reduce rate-limit risk. Default: 5.',
-      parseIntOption,
+      (raw) => parseIntOption(raw),
       5,
     )
     .option(
       '--max-retries <n>',
       'integer — max retry attempts per run on 429 rate-limit responses, ' +
         'using exponential backoff with jitter. Default: 3.',
-      parseIntOption,
+      (raw) => parseIntOption(raw, 0),
       3,
     )
     .option(
@@ -268,7 +270,7 @@ function resolveTemplate(filePath: string): string {
     return readFileSync(filePath, 'utf8');
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    throw new Error(`Could not read request template file: ${detail}`);
+    throw new Error(`Could not read request template "${filePath}": ${detail}`);
   }
 }
 

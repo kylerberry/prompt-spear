@@ -7,14 +7,18 @@
  * is executed directly) is the one place that calls `process.exit`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { writeFileSync, readFileSync } from 'fs';
 
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
-  return { ...actual, writeFileSync: vi.fn() };
+  return { ...actual, writeFileSync: vi.fn(), readFileSync: vi.fn() };
 });
 
 import { run } from './cli.js';
 import type { AuditReport } from './types.js';
+
+const mockedWriteFileSync = vi.mocked(writeFileSync);
+const mockedReadFileSync = vi.mocked(readFileSync);
 
 /** Capture stdout written during a `run` call. */
 function captureStdout(): { output: () => string; restore: () => void } {
@@ -43,6 +47,7 @@ describe('run', () => {
     stdout.restore();
     stderr.mockRestore();
     delete process.env.ENDPOINT_API_KEY;
+    mockedReadFileSync.mockReset();
     vi.restoreAllMocks();
   });
 
@@ -158,6 +163,66 @@ describe('run', () => {
     expect(fetchSpy).toHaveBeenCalled();
     expect(seen.every((h) => h === 'Bearer env-secret-key')).toBe(true);
     expect([0, 1]).toContain(code);
+  });
+
+  it('writes an audit JSON file after each run', async () => {
+    await run(['--demo', 'hardened', '--runs-per-probe', '1']);
+    expect(mockedWriteFileSync).toHaveBeenCalledOnce();
+    const [filename, content] = mockedWriteFileSync.mock.calls[0] as [string, string];
+    expect(filename).toMatch(/_audit\.json$/);
+    const report = JSON.parse(content) as AuditReport;
+    expect(typeof report.score).toBe('number');
+  });
+
+  it('uses --request-template file for the request body when provided', async () => {
+    const template = '{"message":"{{prompt}}","sessionId":"test"}';
+    mockedReadFileSync.mockReturnValue(template);
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ response: 'I cannot help with that.' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    const code = await run([
+      '--endpoint', 'https://example.test/api/chat',
+      '--request-template', 'payload.json',
+      '--runs-per-probe', '1',
+      '--key', 'test-key',
+    ]);
+
+    expect(mockedReadFileSync).toHaveBeenCalledWith('payload.json', 'utf8');
+    expect(fetchSpy).toHaveBeenCalled();
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.sessionId).toBe('test');
+    expect([0, 1]).toContain(code);
+  });
+
+  it('errors when --request-template file lacks {{prompt}}', async () => {
+    mockedReadFileSync.mockReturnValue('{"message":"static"}');
+
+    const code = await run([
+      '--endpoint', 'https://example.test/api/chat',
+      '--request-template', 'bad.json',
+      '--key', 'test-key',
+      '--runs-per-probe', '1',
+    ]);
+
+    expect(code).toBe(1);
+    const message = stderr.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(message).toMatch(/\{\{prompt\}\}/);
+  });
+
+  it('accepts --concurrency and --max-retries without errors', async () => {
+    const code = await run([
+      '--demo', 'hardened',
+      '--runs-per-probe', '1',
+      '--concurrency', '2',
+      '--max-retries', '0',
+    ]);
+    expect(code).toBe(0);
   });
 
   it('rejects an unknown --output format', async () => {

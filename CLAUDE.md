@@ -88,6 +88,20 @@ Partial reveal: first 3 probes show full `attack_prompt` + `response`; remaining
 - `zod` for config and response validation
 - Native `fetch` for HTTP (no SDK dependency for endpoint calls)
 
+## Gotchas
+
+**Commander coercion second argument:** Commander calls coercion functions as `coerce(value, previousValue)` where `previousValue` is the option's default. If your coercion function has optional parameters, the default value bleeds in as that param. Always pass coercions as arrow function wrappers, never as direct references:
+
+```ts
+// Wrong — commander passes default (e.g. 3) as the second arg, corrupting `min`
+.option('--runs-per-probe <n>', '...', parseIntOption, 3)
+
+// Right — arrow wrapper ignores commander's second arg
+.option('--runs-per-probe <n>', '...', (raw) => parseIntOption(raw), 3)
+```
+
+**Vitest fs mock state leak:** When mocking `readFileSync` with `vi.fn()`, call `mockedReadFileSync.mockReset()` in `afterEach`. Without it, a `mockReturnValue` set in one test persists into the next, causing false passes or unexpected failures.
+
 ## Commands
 
 ```bash

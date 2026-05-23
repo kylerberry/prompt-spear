@@ -151,6 +151,29 @@ async function attemptCall(config: EndpointConfig, prompt: string): Promise<stri
 }
 
 /**
+ * Retry wrapper: calls `fn` up to `maxRetries + 1` times, re-trying only on
+ * 429 rate-limit errors. All other errors surface immediately.
+ */
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number,
+  onRetry?: OnRetryCallback,
+): Promise<T> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const isRateLimit = err instanceof EndpointError && err.kind === 'rate-limit';
+      if (!isRateLimit || attempt >= maxRetries) throw err;
+      const delayMs = backoffDelay(attempt);
+      onRetry?.(attempt + 1, maxRetries, delayMs);
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw new EndpointError('rate-limit', 'Exceeded max retries');
+}
+
+/**
  * Sends `prompt` as a user message to the configured endpoint and returns the
  * assistant's response text. Retries up to `config.maxRetries` times on 429
  * rate-limit responses using exponential backoff with jitter. All other errors
@@ -163,23 +186,9 @@ export async function callEndpoint(
   config: EndpointConfig,
   prompt: string,
 ): Promise<string> {
-  const maxRetries = config.maxRetries ?? 0;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await attemptCall(config, prompt);
-    } catch (err) {
-      const isRateLimit = err instanceof EndpointError && err.kind === 'rate-limit';
-      const hasRetries = attempt < maxRetries;
-
-      if (!isRateLimit || !hasRetries) throw err;
-
-      const delayMs = backoffDelay(attempt);
-      config.onRetry?.(attempt + 1, maxRetries, delayMs);
-      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-    }
-  }
-
-  // Unreachable — the loop always throws or returns, but satisfies TS.
-  throw new EndpointError('rate-limit', 'Exceeded max retries');
+  return withRetry(
+    () => attemptCall(config, prompt),
+    config.maxRetries ?? 0,
+    config.onRetry,
+  );
 }

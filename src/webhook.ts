@@ -6,7 +6,7 @@
  * Response text is extracted by trying common field names in priority order,
  * then falling back to the first string value in the object.
  */
-import { EndpointError, backoffDelay, classifyStatus } from './endpoint.js';
+import { EndpointError, classifyStatus, withRetry } from './endpoint.js';
 import type { EndpointConfig } from './endpoint.js';
 
 export interface WebhookConfig extends EndpointConfig {
@@ -28,6 +28,8 @@ function extractResponseText(raw: unknown): string {
   for (const field of RESPONSE_FIELD_PRIORITY) {
     if (typeof obj[field] === 'string') return obj[field] as string;
   }
+  // Fallback: first string value in insertion order — intentionally non-deterministic
+  // for objects with multiple string fields, but better than throwing for well-shaped payloads.
   const firstString = Object.entries(obj).find(([, v]) => typeof v === 'string');
   if (firstString) return firstString[1] as string;
   throw new EndpointError(
@@ -84,19 +86,9 @@ async function attemptWebhookCall(config: WebhookConfig, prompt: string): Promis
 }
 
 export async function callWebhook(config: WebhookConfig, prompt: string): Promise<string> {
-  const maxRetries = config.maxRetries ?? 0;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await attemptWebhookCall(config, prompt);
-    } catch (err) {
-      const isRateLimit = err instanceof EndpointError && err.kind === 'rate-limit';
-      if (!isRateLimit || attempt >= maxRetries) throw err;
-      const delayMs = backoffDelay(attempt);
-      config.onRetry?.(attempt + 1, maxRetries, delayMs);
-      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-    }
-  }
-
-  throw new EndpointError('rate-limit', 'Exceeded max retries');
+  return withRetry(
+    () => attemptWebhookCall(config, prompt),
+    config.maxRetries ?? 0,
+    config.onRetry,
+  );
 }

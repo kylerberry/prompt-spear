@@ -159,4 +159,48 @@ describe('callEndpoint', () => {
     const err = await callEndpoint(baseConfig, 'p').catch((e: unknown) => e as Error);
     expect(err.message).not.toContain('secret-key');
   });
+
+  it('retries on 429 up to maxRetries times then succeeds', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('slow down', { status: 429 }))
+      .mockResolvedValueOnce(new Response('slow down', { status: 429 }))
+      .mockResolvedValue(okResponse('ok'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await callEndpoint({ ...baseConfig, maxRetries: 3 }, 'p');
+
+    expect(result).toBe('ok');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('throws rate-limit after exhausting all retries', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('slow down', { status: 429 })));
+
+    await expect(callEndpoint({ ...baseConfig, maxRetries: 2 }, 'p')).rejects.toMatchObject({
+      kind: 'rate-limit',
+    });
+  });
+
+  it('calls onRetry with attempt number and delay before each retry', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('slow down', { status: 429 }))
+      .mockResolvedValue(okResponse('ok'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const onRetry = vi.fn();
+    await callEndpoint({ ...baseConfig, maxRetries: 2, onRetry }, 'p');
+
+    expect(onRetry).toHaveBeenCalledOnce();
+    expect(onRetry).toHaveBeenCalledWith(1, 2, expect.any(Number));
+  });
+
+  it('does not retry on non-429 errors', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('nope', { status: 500 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(callEndpoint({ ...baseConfig, maxRetries: 3 }, 'p')).rejects.toMatchObject({
+      kind: 'server',
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
 });
