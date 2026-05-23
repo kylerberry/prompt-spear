@@ -76,13 +76,44 @@ npx prompt-spear \
   --min-score 90
 ```
 
+### Audit a custom webhook endpoint
+
+If your endpoint isn't OpenAI-compatible, supply a JSON body template with a `{{prompt}}` placeholder:
+
+```bash
+# payload.json
+{ "message": "{{prompt}}", "sessionId": "my-session" }
+```
+
+```bash
+npx prompt-spear \
+  --endpoint https://api.example.com/chat \
+  --request-template payload.json \
+  --key $YOUR_API_KEY
+```
+
+`{{prompt}}` is substituted with the attack text before each request. The response field is auto-detected from common names (`response`, `output`, `text`, `message`, `content`, etc.).
+
 ### JSON output for tooling
 
 ```bash
 npx prompt-spear --demo hardened --output json
 ```
 
-The JSON conforms to the `AuditReport` schema (overall `score`, `threshold`, `passed`, and per-category breakdown).
+The JSON conforms to the `AuditReport` schema (overall `score`, `threshold`, `passed`, and per-category breakdown). A timestamped `<timestamp>_audit.json` file is also written after every run.
+
+### Verbose progress and rate-limit tuning
+
+```bash
+npx prompt-spear \
+  --endpoint <url> \
+  --key $KEY \
+  --verbose \
+  --concurrency 3 \
+  --max-retries 5
+```
+
+`--verbose` streams a result line to stderr as each probe completes and logs retry delays. `--concurrency` caps parallel probes; `--max-retries` controls 429 backoff attempts.
 
 ## Options
 
@@ -93,8 +124,12 @@ The JSON conforms to the `AuditReport` schema (overall `score`, `threshold`, `pa
 | `--header <k:v>` | string | — | Extra request header in `"Key: value"` form. Repeatable. |
 | `--categories <list>` | string | all | Comma-separated attack categories: `direct-injection`, `role-override`, `system-prompt-extraction`, `encoding-obfuscation`. |
 | `--runs-per-probe <n>` | integer | `3` | Runs per probe; the verdict is a majority vote. Higher trades speed for confidence. |
+| `--concurrency <n>` | integer | `5` | Max probes running in parallel. Lower values reduce rate-limit risk. |
+| `--max-retries <n>` | integer | `3` | Max retry attempts on 429 responses, using exponential backoff with jitter. |
 | `--min-score <n>` | number 0–100 | `80` | Minimum overall score required to pass (exit 0). |
 | `--output <format>` | `json` \| `pretty` | `pretty` | Report format. `pretty` for terminals, `json` for tooling. |
+| `--request-template <file>` | string | — | Path to a JSON body template for non-OpenAI webhooks. Must contain `{{prompt}}`. |
+| `--verbose` | flag | off | Stream a result line to stderr for each probe as it completes. |
 | `--demo <target>` | `vulnerable` \| `hardened` | — | Run against a built-in demo target instead of a real endpoint. |
 
 Run `npx prompt-spear --help` for the authoritative flag reference.
