@@ -22,7 +22,7 @@ import { formatReport } from './reporter.js';
 import type { OutputFormat } from './reporter.js';
 import { exitCode } from './reporter.js';
 import { callEndpoint, EndpointError } from './endpoint.js';
-import type { EndpointConfig } from './endpoint.js';
+import type { EndpointConfig, OnRetryCallback } from './endpoint.js';
 import { getDemoTarget } from './demo/index.js';
 import type { DemoTargetName } from './demo/index.js';
 import type { Category } from './types.js';
@@ -45,6 +45,7 @@ interface CliOptions {
   categories?: Category[];
   runsPerProbe: number;
   concurrency: number;
+  maxRetries: number;
   minScore: number;
   output: OutputFormat;
   demo?: DemoTargetName;
@@ -161,6 +162,13 @@ function buildProgram(): Command {
       5,
     )
     .option(
+      '--max-retries <n>',
+      'integer — max retry attempts per run on 429 rate-limit responses, ' +
+        'using exponential backoff with jitter. Default: 3.',
+      parseIntOption,
+      3,
+    )
+    .option(
       '--min-score <n>',
       'number 0-100 — minimum overall score required to pass (exit 0). ' +
         'Default: 80.',
@@ -229,6 +237,7 @@ function validateOptions(raw: Record<string, unknown>): CliOptions {
       : undefined,
     runsPerProbe: raw.runsPerProbe as number,
     concurrency: raw.concurrency as number,
+    maxRetries: raw.maxRetries as number,
     minScore: raw.minScore as number,
     output: output as OutputFormat,
     demo: demo as DemoTargetName | undefined,
@@ -237,7 +246,7 @@ function validateOptions(raw: Record<string, unknown>): CliOptions {
 }
 
 /** Build the endpoint adapter the runner drives — demo or real HTTP. */
-function buildAdapter(options: CliOptions): EndpointAdapter {
+function buildAdapter(options: CliOptions, onRetry?: OnRetryCallback): EndpointAdapter {
   if (options.demo) {
     return getDemoTarget(options.demo);
   }
@@ -245,6 +254,8 @@ function buildAdapter(options: CliOptions): EndpointAdapter {
     url: options.endpoint!,
     apiKey: options.key ?? '',
     headers: parseHeaders(options.header),
+    maxRetries: options.maxRetries,
+    onRetry,
   };
   return (prompt: string) => callEndpoint(config, prompt);
 }
@@ -287,6 +298,14 @@ export async function run(argv: string[]): Promise<number> {
     );
   }
 
+  const onRetry: OnRetryCallback | undefined = options.verbose
+    ? (attempt, maxRetries, delayMs) => {
+        process.stderr.write(
+          `         ↻  rate limited — retry ${attempt}/${maxRetries}, waiting ${(delayMs / 1000).toFixed(1)}s\n`,
+        );
+      }
+    : undefined;
+
   const onProbeComplete: ProbeProgressCallback | undefined = options.verbose
     ? (completed, total, result) => {
         const icon = result.verdict === 'pass' ? '✓' : result.verdict === 'fail' ? '✗' : '?';
@@ -303,12 +322,12 @@ export async function run(argv: string[]): Promise<number> {
       (p) => !options.categories || options.categories!.includes(p.category),
     ).length;
     process.stderr.write(
-      `Probing ${totalProbes} probes (${options.runsPerProbe} runs each, concurrency ${options.concurrency})...\n`,
+      `Probing ${totalProbes} probes (${options.runsPerProbe} runs each, concurrency ${options.concurrency}, max-retries ${options.maxRetries})...\n`,
     );
   }
 
   try {
-    const adapter = buildAdapter(options);
+    const adapter = buildAdapter(options, onRetry);
     const results = await runProbes(probes, adapter, {
       runsPerProbe: options.runsPerProbe,
       concurrency: options.concurrency,

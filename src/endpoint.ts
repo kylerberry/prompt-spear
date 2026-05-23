@@ -7,6 +7,9 @@
  */
 import { z } from 'zod';
 
+/** Called before each retry delay so callers can surface progress. */
+export type OnRetryCallback = (attempt: number, maxRetries: number, delayMs: number) => void;
+
 /** Configuration describing the target endpoint. */
 export interface EndpointConfig {
   /** OpenAI-compatible chat completions URL. */
@@ -21,6 +24,10 @@ export interface EndpointConfig {
   headers?: Record<string, string>;
   /** Request timeout in milliseconds. Default: 60000. */
   timeoutMs?: number;
+  /** Max retry attempts on 429 rate-limit responses. Default: 0 (no retries). */
+  maxRetries?: number;
+  /** Called before each retry delay. Use for verbose progress output. */
+  onRetry?: OnRetryCallback;
 }
 
 /** Classification of an endpoint failure. */
@@ -68,17 +75,14 @@ function classifyStatus(status: number): EndpointErrorKind {
   return 'http';
 }
 
-/**
- * Sends `prompt` as a user message to the configured endpoint and returns the
- * assistant's response text.
- *
- * @throws {EndpointError} on auth, rate-limit, server, network, timeout, or
- *   malformed-response failures.
- */
-export async function callEndpoint(
-  config: EndpointConfig,
-  prompt: string,
-): Promise<string> {
+/** Exponential backoff delay with ±25% jitter. */
+function backoffDelay(attempt: number): number {
+  const base = 1000 * Math.pow(2, attempt);
+  return Math.round(base * (0.75 + Math.random() * 0.5));
+}
+
+/** Single HTTP attempt — no retry logic. */
+async function attemptCall(config: EndpointConfig, prompt: string): Promise<string> {
   const messages: { role: 'system' | 'user'; content: string }[] = [];
   if (config.systemPrompt) {
     messages.push({ role: 'system', content: config.systemPrompt });
@@ -144,4 +148,38 @@ export async function callEndpoint(
   }
 
   return parsed.data.choices[0]!.message.content;
+}
+
+/**
+ * Sends `prompt` as a user message to the configured endpoint and returns the
+ * assistant's response text. Retries up to `config.maxRetries` times on 429
+ * rate-limit responses using exponential backoff with jitter. All other errors
+ * surface immediately as a typed {@link EndpointError}.
+ *
+ * @throws {EndpointError} on auth, rate-limit (after retries), server,
+ *   network, timeout, or malformed-response failures.
+ */
+export async function callEndpoint(
+  config: EndpointConfig,
+  prompt: string,
+): Promise<string> {
+  const maxRetries = config.maxRetries ?? 0;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await attemptCall(config, prompt);
+    } catch (err) {
+      const isRateLimit = err instanceof EndpointError && err.kind === 'rate-limit';
+      const hasRetries = attempt < maxRetries;
+
+      if (!isRateLimit || !hasRetries) throw err;
+
+      const delayMs = backoffDelay(attempt);
+      config.onRetry?.(attempt + 1, maxRetries, delayMs);
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  // Unreachable — the loop always throws or returns, but satisfies TS.
+  throw new EndpointError('rate-limit', 'Exceeded max retries');
 }
