@@ -13,13 +13,13 @@
  * `--help` is the primary documentation surface (PRD §CLI). Every flag below
  * is described with its type, default, and purpose.
  */
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { Command, InvalidArgumentError } from 'commander';
 import { probes } from './probes/index.js';
 import { runProbes } from './runner.js';
 import type { EndpointAdapter, ProbeProgressCallback, RunErrorCallback } from './runner.js';
 import { score } from './scorer.js';
-import { formatReport } from './reporter.js';
+import { formatReport, applyPartialReveal } from './reporter.js';
 import type { OutputFormat } from './reporter.js';
 import { exitCode } from './reporter.js';
 import { callEndpoint, EndpointError } from './endpoint.js';
@@ -55,6 +55,11 @@ interface CliOptions {
   demo?: DemoTargetName;
   verbose: boolean;
   requestTemplate?: string;
+}
+
+/** Generate a compact UTC timestamp string for audit filenames. */
+function timestamp(): string {
+  return new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
 }
 
 /** commander coercion: parse a positive integer flag value. */
@@ -379,6 +384,11 @@ export async function run(argv: string[]): Promise<number> {
     });
     const report = score(results, { threshold: options.minScore });
     console.log(formatReport(report, options.output));
+
+    const auditFilename = `${timestamp()}_audit.json`;
+    writeFileSync(auditFilename, JSON.stringify(applyPartialReveal(report), null, 2));
+    process.stderr.write(`\nFull report written to ${auditFilename}\n`);
+
     return exitCode(report);
   } catch (err) {
     if (err instanceof EndpointError && err.kind === 'auth') {

@@ -53,28 +53,10 @@ export function applyPartialReveal(report: AuditReport): AuditReport {
   return { ...report, categories };
 }
 
-/** Count redacted probes across all categories. */
-function countRedacted(report: AuditReport): number {
-  return report.categories.reduce(
-    (sum, c) => sum + c.probes.filter((p) => p.redacted).length,
-    0,
-  );
-}
-
 /** Render a single probe result as indented terminal lines. */
 function formatProbe(probe: ProbeResult): string {
   const mark = probe.verdict === 'pass' ? '✓' : probe.verdict === 'fail' ? '✗' : '?';
-  const lines = [
-    `    ${mark} ${probe.probe.name} — ${probe.verdict} (${probe.confidence})`,
-  ];
-  if (probe.reasoning) lines.push(`      ${probe.reasoning}`);
-  if (probe.redacted) {
-    lines.push('      [attack/response redacted — free tier]');
-  } else {
-    if (probe.attack_prompt) lines.push(`      attack:   ${probe.attack_prompt}`);
-    if (probe.response) lines.push(`      response: ${probe.response}`);
-  }
-  return lines.join('\n');
+  return `    ${mark} ${probe.probe.name} — ${probe.verdict} (${probe.confidence})`;
 }
 
 /** Render the full report as a human-readable terminal string. */
@@ -94,13 +76,6 @@ function formatPretty(report: AuditReport): string {
     lines.push(`  ${category.name}: ${catScore}/100 — ${catGate}`);
     for (const probe of category.probes) lines.push(formatProbe(probe));
     lines.push('');
-  }
-
-  const redacted = countRedacted(report);
-  if (redacted > 0) {
-    lines.push(
-      `Upgrade to see all ${redacted} attack/response pairs at prompt-spear.dev`,
-    );
   }
 
   return lines.join('\n');

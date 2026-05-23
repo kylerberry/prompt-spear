@@ -195,28 +195,19 @@ describe('formatReport — pretty', () => {
     expect(out).toContain('direct-injection');
   });
 
-  it('includes per-probe verdict, confidence and reasoning', () => {
+  it('includes per-probe verdict and confidence', () => {
     const out = formatReport(makeReport([makeResult('a')], 90), 'pretty');
     expect(out).toContain('probe a');
     expect(out).toContain('3/3');
-    expect(out).toContain('reasoning-a');
   });
 
-  it('shows the upgrade CTA when probes are redacted', () => {
-    const out = formatReport(
-      makeReport([
-        makeResult('a'),
-        makeResult('b'),
-        makeResult('c'),
-        makeResult('d'),
-      ]),
-      'pretty',
-    );
-    expect(out).toMatch(/prompt-spear\.dev/);
-    expect(out).toContain('1');
+  it('does not include attack prompts or responses in pretty output', () => {
+    const out = formatReport(makeReport([makeResult('a')], 90), 'pretty');
+    expect(out).not.toContain('attack_prompt');
+    expect(out).not.toContain('reasoning-a');
   });
 
-  it('omits the upgrade CTA when no probes are redacted', () => {
+  it('omits the upgrade CTA from pretty output', () => {
     const out = formatReport(makeReport([makeResult('a')], 90), 'pretty');
     expect(out).not.toMatch(/prompt-spear\.dev/);
   });
