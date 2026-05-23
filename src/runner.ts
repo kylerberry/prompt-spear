@@ -27,6 +27,7 @@ import type {
   Verdict,
 } from './types.js';
 import { evaluate } from './evaluators/pattern.js';
+import { EndpointError } from './endpoint.js';
 
 /** Endpoint adapter shape — matches `callEndpoint` bound to a config. */
 export type EndpointAdapter = (prompt: string) => Promise<string>;
@@ -55,8 +56,10 @@ async function runProbe(
       try {
         const response = await adapter(probe.attack_prompt);
         return { response, verdict: evaluate(probe.check, response) };
-      } catch {
-        // A failed endpoint call is an inconclusive run, never a crash.
+      } catch (err) {
+        // Auth errors won't recover across retries — surface them immediately.
+        if (err instanceof EndpointError && err.kind === 'auth') throw err;
+        // Other failures (network, timeout, server) are inconclusive for this run.
         return { response: '', verdict: 'uncertain' };
       }
     }),

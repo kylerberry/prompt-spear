@@ -21,7 +21,7 @@ import { score } from './scorer.js';
 import { formatReport } from './reporter.js';
 import type { OutputFormat } from './reporter.js';
 import { exitCode } from './reporter.js';
-import { callEndpoint } from './endpoint.js';
+import { callEndpoint, EndpointError } from './endpoint.js';
 import type { EndpointConfig } from './endpoint.js';
 import { getDemoTarget } from './demo/index.js';
 import type { DemoTargetName } from './demo/index.js';
@@ -264,6 +264,13 @@ export async function run(argv: string[]): Promise<number> {
     return 1;
   }
 
+  if (!options.demo && !options.key) {
+    console.warn(
+      'Warning: no API key provided. Set --key or ENDPOINT_API_KEY. ' +
+      'Requests may be rejected with 401 Unauthorized.',
+    );
+  }
+
   try {
     const adapter = buildAdapter(options);
     const results = await runProbes(probes, adapter, {
@@ -274,6 +281,14 @@ export async function run(argv: string[]): Promise<number> {
     console.log(formatReport(report, options.output));
     return exitCode(report);
   } catch (err) {
+    if (err instanceof EndpointError && err.kind === 'auth') {
+      console.error(
+        `Authentication failed (HTTP ${err.status ?? 401}). ` +
+        'The endpoint rejected the request. Provide an API key with --key <key> ' +
+        'or the ENDPOINT_API_KEY environment variable.',
+      );
+      return 1;
+    }
     console.error(
       `Audit failed: ${err instanceof Error ? err.message : String(err)}`,
     );
