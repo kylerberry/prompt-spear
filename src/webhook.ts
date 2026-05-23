@@ -1,44 +1,57 @@
 /**
- * Webhook adapter — sends attack prompts to a plain JSON HTTP endpoint
- * (non-OpenAI). The request and response field names are caller-configured.
+ * Webhook adapter — POSTs attack prompts to a plain JSON endpoint using a
+ * caller-supplied body template. The template is a JSON string containing
+ * {{prompt}} which is substituted with the attack text before each request.
  *
- * Uses the same EndpointError / retry infrastructure as the OpenAI adapter.
+ * Response text is extracted by trying common field names in priority order,
+ * then falling back to the first string value in the object.
  */
-import { z } from 'zod';
-import { EndpointError, backoffDelay } from './endpoint.js';
+import { EndpointError, backoffDelay, classifyStatus } from './endpoint.js';
 import type { EndpointConfig } from './endpoint.js';
 
-/** Extra config specific to plain webhook endpoints. */
 export interface WebhookConfig extends EndpointConfig {
-  /** Body field that receives the attack prompt. e.g. "message", "input" */
-  promptField: string;
-  /** Top-level response field that contains the reply text. e.g. "response", "output" */
-  responseField: string;
+  /** JSON body template with {{prompt}} placeholder. */
+  bodyTemplate: string;
 }
 
-/** Single POST attempt — no retry logic. */
-async function attemptWebhookCall(
-  config: WebhookConfig,
-  prompt: string,
-): Promise<string> {
+const PROMPT_PLACEHOLDER = /\{\{prompt\}\}/g;
+
+const RESPONSE_FIELD_PRIORITY = [
+  'response', 'output', 'text', 'message', 'content', 'reply', 'answer', 'result',
+];
+
+function extractResponseText(raw: unknown): string {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new EndpointError('malformed-response', 'Response was not a JSON object');
+  }
+  const obj = raw as Record<string, unknown>;
+  for (const field of RESPONSE_FIELD_PRIORITY) {
+    if (typeof obj[field] === 'string') return obj[field] as string;
+  }
+  const firstString = Object.entries(obj).find(([, v]) => typeof v === 'string');
+  if (firstString) return firstString[1] as string;
+  throw new EndpointError(
+    'malformed-response',
+    `No string field found in response. Got keys: ${Object.keys(obj).join(', ') || '(none)'}`,
+  );
+}
+
+async function attemptWebhookCall(config: WebhookConfig, prompt: string): Promise<string> {
+  const body = config.bodyTemplate.replace(PROMPT_PLACEHOLDER, prompt);
+
   const headers = new Headers(config.headers);
   headers.set('content-type', 'application/json');
-  if (config.apiKey) {
-    headers.set('authorization', `Bearer ${config.apiKey}`);
-  }
+  if (config.apiKey) headers.set('authorization', `Bearer ${config.apiKey}`);
 
   const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    config.timeoutMs ?? 60_000,
-  );
+  const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 60_000);
 
   let response: Response;
   try {
     response = await fetch(config.url, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ [config.promptField]: prompt }),
+      body,
       signal: controller.signal,
     });
   } catch (err) {
@@ -52,15 +65,11 @@ async function attemptWebhookCall(
   }
 
   if (!response.ok) {
-    const kind =
-      response.status === 401 || response.status === 403
-        ? 'auth'
-        : response.status === 429
-          ? 'rate-limit'
-          : response.status >= 500
-            ? 'server'
-            : 'http';
-    throw new EndpointError(kind, `Endpoint returned HTTP ${response.status}`, response.status);
+    throw new EndpointError(
+      classifyStatus(response.status),
+      `Endpoint returned HTTP ${response.status}`,
+      response.status,
+    );
   }
 
   let raw: unknown;
@@ -70,27 +79,10 @@ async function attemptWebhookCall(
     throw new EndpointError('malformed-response', 'Response body was not valid JSON');
   }
 
-  const schema = z.object({ [config.responseField]: z.string() });
-  const parsed = schema.safeParse(raw);
-  if (!parsed.success) {
-    throw new EndpointError(
-      'malformed-response',
-      `Response did not contain a string field "${config.responseField}". ` +
-        `Got keys: ${Object.keys(raw as object).join(', ') || '(none)'}`,
-    );
-  }
-
-  return (parsed.data as Record<string, string>)[config.responseField]!;
+  return extractResponseText(raw);
 }
 
-/**
- * POST `prompt` to a plain JSON webhook and return the reply text.
- * Retries on 429 with exponential backoff (same policy as the OpenAI adapter).
- */
-export async function callWebhook(
-  config: WebhookConfig,
-  prompt: string,
-): Promise<string> {
+export async function callWebhook(config: WebhookConfig, prompt: string): Promise<string> {
   const maxRetries = config.maxRetries ?? 0;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -98,9 +90,7 @@ export async function callWebhook(
       return await attemptWebhookCall(config, prompt);
     } catch (err) {
       const isRateLimit = err instanceof EndpointError && err.kind === 'rate-limit';
-      const hasRetries = attempt < maxRetries;
-      if (!isRateLimit || !hasRetries) throw err;
-
+      if (!isRateLimit || attempt >= maxRetries) throw err;
       const delayMs = backoffDelay(attempt);
       config.onRetry?.(attempt + 1, maxRetries, delayMs);
       await new Promise<void>((resolve) => setTimeout(resolve, delayMs));

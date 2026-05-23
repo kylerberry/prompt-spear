@@ -13,6 +13,7 @@
  * `--help` is the primary documentation surface (PRD §CLI). Every flag below
  * is described with its type, default, and purpose.
  */
+import { readFileSync } from 'fs';
 import { Command, InvalidArgumentError } from 'commander';
 import { probes } from './probes/index.js';
 import { runProbes } from './runner.js';
@@ -22,9 +23,10 @@ import { formatReport } from './reporter.js';
 import type { OutputFormat } from './reporter.js';
 import { exitCode } from './reporter.js';
 import { callEndpoint, EndpointError } from './endpoint.js';
-import type { EndpointConfig, OnRetryCallback } from './endpoint.js';
+import type { OnRetryCallback } from './endpoint.js';
 import { callWebhook } from './webhook.js';
 import type { WebhookConfig } from './webhook.js';
+
 import { getDemoTarget } from './demo/index.js';
 import type { DemoTargetName } from './demo/index.js';
 import type { Category } from './types.js';
@@ -52,8 +54,7 @@ interface CliOptions {
   output: OutputFormat;
   demo?: DemoTargetName;
   verbose: boolean;
-  promptField?: string;
-  responseField?: string;
+  requestTemplate?: string;
 }
 
 /** commander coercion: parse a positive integer flag value. */
@@ -193,14 +194,10 @@ function buildProgram(): Command {
         'vulnerable fails the audit; hardened passes it.',
     )
     .option(
-      '--prompt-field <key>',
-      'string — for plain JSON webhooks: body field that receives the attack prompt ' +
-        '(e.g. "message", "input"). When set, skips the OpenAI request format.',
-    )
-    .option(
-      '--response-field <key>',
-      'string — for plain JSON webhooks: top-level response field containing the reply ' +
-        '(e.g. "response", "output"). Required when --prompt-field is set.',
+      '--request-template <path|json>',
+      'string — body template for non-OpenAI webhooks. Use @file.json to load from a file ' +
+        'or pass inline JSON. Include {{prompt}} where the attack text should go. ' +
+        'e.g. @payload.json or \'{"message":"{{prompt}}"}\'',
     )
     .option(
       '--verbose',
@@ -213,7 +210,9 @@ function buildProgram(): Command {
         '  $ npx prompt-spear --demo vulnerable\n' +
         '  $ npx prompt-spear --demo hardened --output json\n' +
         '  $ npx prompt-spear --endpoint https://api.example.com/v1/chat/completions --key $KEY\n' +
-        '  $ npx prompt-spear --endpoint <url> --categories role-override,direct-injection --min-score 90\n',
+        '  $ npx prompt-spear --endpoint <url> --categories role-override,direct-injection --min-score 90\n' +
+        '  $ npx prompt-spear --endpoint <url> --request-template @payload.json --key $KEY\n' +
+        '  $ npx prompt-spear --endpoint <url> --request-template \'{"message":"{{prompt}}"}\'  --key $KEY\n',
     );
   return program;
 }
@@ -242,15 +241,6 @@ function validateOptions(raw: Record<string, unknown>): CliOptions {
     );
   }
 
-  const promptField = raw.promptField as string | undefined;
-  const responseField = raw.responseField as string | undefined;
-  if (promptField && !responseField) {
-    throw new Error('--response-field <key> is required when --prompt-field is set.');
-  }
-  if (responseField && !promptField) {
-    throw new Error('--prompt-field <key> is required when --response-field is set.');
-  }
-
   return {
     endpoint,
     key: (raw.key as string | undefined) ?? process.env.ENDPOINT_API_KEY,
@@ -265,9 +255,21 @@ function validateOptions(raw: Record<string, unknown>): CliOptions {
     output: output as OutputFormat,
     demo: demo as DemoTargetName | undefined,
     verbose: raw.verbose as boolean,
-    promptField,
-    responseField,
+    requestTemplate: raw.requestTemplate as string | undefined,
   };
+}
+
+/** Load a request template from @file path or return the string as-is. */
+function resolveTemplate(value: string): string {
+  if (value.startsWith('@')) {
+    try {
+      return readFileSync(value.slice(1), 'utf8');
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(`Could not read request template file: ${detail}`);
+    }
+  }
+  return value;
 }
 
 /** Build the endpoint adapter the runner drives — demo, webhook, or OpenAI. */
@@ -284,17 +286,16 @@ function buildAdapter(options: CliOptions, onRetry?: OnRetryCallback): EndpointA
     onRetry,
   };
 
-  if (options.promptField && options.responseField) {
-    const config: WebhookConfig = {
-      ...shared,
-      promptField: options.promptField,
-      responseField: options.responseField,
-    };
+  if (options.requestTemplate) {
+    const bodyTemplate = resolveTemplate(options.requestTemplate);
+    if (!bodyTemplate.includes('{{prompt}}')) {
+      throw new Error('Request template must contain {{prompt}} placeholder.');
+    }
+    const config: WebhookConfig = { ...shared, bodyTemplate };
     return (prompt: string) => callWebhook(config, prompt);
   }
 
-  const config: EndpointConfig = shared;
-  return (prompt: string) => callEndpoint(config, prompt);
+  return (prompt: string) => callEndpoint(shared, prompt);
 }
 
 /**

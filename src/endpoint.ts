@@ -68,7 +68,7 @@ const chatCompletionSchema = z.object({
     .min(1),
 });
 
-function classifyStatus(status: number): EndpointErrorKind {
+export function classifyStatus(status: number): EndpointErrorKind {
   if (status === 401 || status === 403) return 'auth';
   if (status === 429) return 'rate-limit';
   if (status >= 500) return 'server';
