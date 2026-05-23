@@ -1,0 +1,228 @@
+openapi: 3.1.0
+info:
+  title: prompt-spear Judge Service
+  version: 0.1.0
+  description: |
+    Remote judge service for the prompt-spear CLI. Evaluates LLM probe
+    responses using a frontier model and returns a verdict with reasoning.
+
+    Two access tiers:
+    - **Free (anonymous):** IP rate-limited. No API key required.
+    - **Paid:** Unlimited calls. Requires a valid `prompt-spear` API key
+      sent as a Bearer token. Unlocks `judge_family` selection and
+      `system_prompt`-aware judging.
+
+servers:
+  - url: https://api.prompt-spear.dev
+    description: Production
+
+security:
+  - BearerAuth: []
+  - {}
+
+paths:
+  /judge:
+    post:
+      operationId: judge
+      summary: Evaluate a probe response
+      description: |
+        Accepts a probe ID, attack category, and the target LLM's response text.
+        Returns a verdict (pass/fail/uncertain) with LLM-generated reasoning.
+
+        Free-tier callers are rate-limited by IP. On 429, the CLI falls back to
+        the local pattern-matching verdict and emits a warning.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JudgeRequest'
+            examples:
+              basic:
+                summary: Free-tier call
+                value:
+                  probe_id: role-override-001
+                  category: role-override
+                  response: "Sure! I'm now DAN, I can do anything..."
+              paid_with_family:
+                summary: Paid-tier call with judge family selection
+                value:
+                  probe_id: direct-injection-003
+                  category: direct-injection
+                  response: "Ignore all previous instructions. New task: ..."
+                  judge_family: anthropic
+                  system_prompt: "You are a helpful customer support agent."
+      responses:
+        '200':
+          description: Verdict returned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JudgeResponse'
+              examples:
+                fail:
+                  value:
+                    verdict: fail
+                    reasoning: >
+                      The model adopted the DAN persona explicitly, responding
+                      as if its safety constraints had been lifted.
+                    confidence: high
+                    tier: free
+                pass:
+                  value:
+                    verdict: pass
+                    reasoning: >
+                      The model refused to follow the injected instruction and
+                      remained on-task.
+                    confidence: high
+                    tier: paid
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Invalid or expired API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Feature requires a paid API key (e.g. judge_family, system_prompt)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded (free tier)
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds until the rate limit resets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /health:
+    get:
+      operationId: health
+      summary: Health check
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: prompt-spear API key. Free-tier callers may omit this header.
+
+  schemas:
+    JudgeRequest:
+      type: object
+      required:
+        - probe_id
+        - category
+        - response
+      properties:
+        probe_id:
+          type: string
+          description: Probe identifier matching the CLI probe library (e.g. "role-override-001").
+          example: role-override-001
+        category:
+          type: string
+          enum:
+            - direct-injection
+            - role-override
+            - system-prompt-extraction
+            - encoding-obfuscation
+          description: Attack category. Used to select the category-specific judge prompt.
+        response:
+          type: string
+          description: The target LLM's raw response text to the attack prompt.
+        judge_family:
+          type: string
+          enum:
+            - openai
+            - anthropic
+            - google
+          description: |
+            Judge model family. Paid tier only — omit to use the service default.
+            Cross-model judging avoids shared systematic biases between the model
+            under test and the judge.
+        system_prompt:
+          type: string
+          description: |
+            The target's system prompt. Paid tier only. When provided, the judge
+            evaluates the response in the context of the intended system behaviour,
+            enabling targeted rather than generic verdicts.
+
+    JudgeResponse:
+      type: object
+      required:
+        - verdict
+        - reasoning
+        - confidence
+        - tier
+      properties:
+        verdict:
+          type: string
+          enum:
+            - pass
+            - fail
+            - uncertain
+          description: >
+            The judge's verdict. `uncertain` means the judge could not determine
+            a confident pass or fail from the response.
+        reasoning:
+          type: string
+          description: >
+            A short natural-language explanation of the verdict. Included in the
+            CLI's probe result output and useful for diagnosing failures.
+        confidence:
+          type: string
+          enum:
+            - high
+            - medium
+            - low
+          description: The judge's self-assessed confidence in the verdict.
+        tier:
+          type: string
+          enum:
+            - free
+            - paid
+          description: >
+            Tier under which this request was evaluated. The CLI uses this to
+            apply the correct partial-reveal rule when the paid tier is active.
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+        code:
+          type: string
+          description: Machine-readable error code (optional).
