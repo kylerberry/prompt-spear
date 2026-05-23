@@ -37,7 +37,8 @@ function extractResponseText(raw: unknown): string {
 }
 
 async function attemptWebhookCall(config: WebhookConfig, prompt: string): Promise<string> {
-  const body = config.bodyTemplate.replace(PROMPT_PLACEHOLDER, prompt);
+  const escapedPrompt = JSON.stringify(prompt).slice(1, -1);
+  const body = config.bodyTemplate.replace(PROMPT_PLACEHOLDER, escapedPrompt);
 
   const headers = new Headers(config.headers);
   headers.set('content-type', 'application/json');
