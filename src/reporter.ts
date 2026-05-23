@@ -14,13 +14,10 @@
  * unconditional first-3 rule so free-tier output is correct by default.
  */
 
-import type { AuditReport, CategoryResult, ProbeResult } from './types.js';
+import type { AuditReport, ProbeResult } from './types.js';
 
 /** Supported output formats. `markdown` is deferred to issue #16. */
 export type OutputFormat = 'json' | 'pretty';
-
-/** Number of probes revealed in full before redaction kicks in. */
-const REVEAL_LIMIT = 3;
 
 /**
  * Map a report's pass/fail gate to a process exit code.
@@ -32,25 +29,11 @@ export function exitCode(report: AuditReport): number {
   return report.passed ? 0 : 1;
 }
 
-/**
- * Apply the partial-reveal rule to a report.
- *
- * Probes are indexed globally in category order. The first {@link REVEAL_LIMIT}
- * keep their `attack_prompt`/`response`; later probes get `redacted: true`
- * with both fields nulled. Returns a new report; the input is not mutated.
- */
+// TODO: Re-enable partial reveal once payment/tier detection is in place.
+// Previous behavior: first 3 probes unredacted, remainder redacted (attack_prompt/response nulled).
+// Skipping until we have a real free-vs-paid distinction.
 export function applyPartialReveal(report: AuditReport): AuditReport {
-  let globalIndex = 0;
-  const categories: CategoryResult[] = report.categories.map((category) => ({
-    ...category,
-    probes: category.probes.map((probe) => {
-      const redacted = globalIndex >= REVEAL_LIMIT;
-      globalIndex += 1;
-      if (!redacted) return { ...probe };
-      return { ...probe, attack_prompt: null, response: null, redacted: true };
-    }),
-  }));
-  return { ...report, categories };
+  return report;
 }
 
 /** Render a single probe result as indented terminal lines. */

@@ -88,7 +88,8 @@ describe('applyPartialReveal', () => {
     expect(probes[0].response).toBe('response-a');
   });
 
-  it('redacts probe index 3+ when there are 4 probes', () => {
+  // TODO: Update these when partial reveal is re-enabled for paid vs. free tiers.
+  it('does not redact any probes (partial reveal currently disabled)', () => {
     const report = applyPartialReveal(
       makeReport([
         makeResult('a'),
@@ -98,13 +99,12 @@ describe('applyPartialReveal', () => {
       ]),
     );
     const probes = report.categories[0].probes;
-    expect(probes.slice(0, 3).every((p) => !p.redacted)).toBe(true);
-    expect(probes[3].redacted).toBe(true);
-    expect(probes[3].attack_prompt).toBeNull();
-    expect(probes[3].response).toBeNull();
+    expect(probes.every((p) => !p.redacted)).toBe(true);
+    expect(probes[3].attack_prompt).toBe('attack-d');
+    expect(probes[3].response).toBe('response-d');
   });
 
-  it('counts the global probe index across categories', () => {
+  it('returns the report unchanged across multiple categories', () => {
     const report: AuditReport = {
       passed: true,
       score: 90,
@@ -126,8 +126,7 @@ describe('applyPartialReveal', () => {
     };
     const revealed = applyPartialReveal(report);
     expect(revealed.categories[0].probes.every((p) => !p.redacted)).toBe(true);
-    expect(revealed.categories[1].probes[0].redacted).toBe(false);
-    expect(revealed.categories[1].probes[1].redacted).toBe(true);
+    expect(revealed.categories[1].probes.every((p) => !p.redacted)).toBe(true);
   });
 
   it('does not mutate the input report', () => {
@@ -162,7 +161,8 @@ describe('formatReport — json', () => {
     );
   });
 
-  it('applies partial reveal: 4th probe redacted in json output', () => {
+  // TODO: Update when partial reveal is re-enabled for paid vs. free tiers.
+  it('json output includes full probe data (partial reveal currently disabled)', () => {
     const report = makeReport([
       makeResult('a'),
       makeResult('b'),
@@ -170,8 +170,8 @@ describe('formatReport — json', () => {
       makeResult('d'),
     ]);
     const parsed = JSON.parse(formatReport(report, 'json')) as AuditReport;
-    expect(parsed.categories[0].probes[3].redacted).toBe(true);
-    expect(parsed.categories[0].probes[3].attack_prompt).toBeNull();
+    expect(parsed.categories[0].probes[3].redacted).toBe(false);
+    expect(parsed.categories[0].probes[3].attack_prompt).toBe('attack-d');
   });
 });
 
