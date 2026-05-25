@@ -146,4 +146,4 @@ vite.config.ts.timestamp-*
 templates/payload.json
 
 # Audit output files
-*_audit.json
+*_audit.jsonnode-compile-cache/

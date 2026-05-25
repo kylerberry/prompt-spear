@@ -2,6 +2,8 @@
 
 CLI tool that fires a curated battery of prompt injection probes at any LLM endpoint and returns a scored report. Exit code `0`/`1` makes it usable as a CI deployment gate.
 
+> **Status:** v0.1 — early release. Pattern-matching verdicts are stable and ready for CI use. An optional remote judge service (LLM-as-judge for nuanced verdicts) and a paid tier for targeted attacks are in development. The JSON output schema may gain fields in future versions; existing fields will not change without a major version bump.
+
 ## What it does
 
 `prompt-spear` sends adversarial prompts — drawn from four attack categories — to an OpenAI-compatible `/chat/completions` endpoint, runs each probe multiple times for a majority-vote verdict, and produces a weighted pass/fail report.
@@ -30,7 +32,7 @@ prompt-spear --demo vulnerable
 
 ### From source
 
-Requires Node.js 18+ (uses native `fetch`).
+Requires Node.js 20+.
 
 ```bash
 git clone https://github.com/kylerberry/prompt-spear.git

@@ -1,8 +1,29 @@
 {
   "name": "prompt-spear",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "CLI tool that audits LLM endpoints against prompt injection and jailbreak attack categories.",
   "license": "MIT",
+  "author": "Kyler Berry",
+  "homepage": "https://github.com/kylerberry/prompt-spear#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kylerberry/prompt-spear.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kylerberry/prompt-spear/issues"
+  },
+  "keywords": [
+    "llm",
+    "ai-security",
+    "prompt-injection",
+    "jailbreak",
+    "security-testing",
+    "ci",
+    "audit",
+    "openai",
+    "anthropic",
+    "red-team"
+  ],
   "type": "module",
   "bin": {
     "prompt-spear": "dist/cli.js"
@@ -17,7 +38,8 @@
     "build": "tsc",
     "test": "vitest",
     "test:run": "vitest --run",
-    "lint": "eslint src/"
+    "lint": "eslint src/",
+    "prepublishOnly": "npm run build && npm run test:run"
   },
   "dependencies": {
     "commander": "^13.1.0",
