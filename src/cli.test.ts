@@ -14,7 +14,9 @@ vi.mock('fs', async (importOriginal) => {
   return { ...actual, writeFileSync: vi.fn(), readFileSync: vi.fn() };
 });
 
-import { run } from './cli.js';
+import { run, readPackageVersion, isMainModule } from './cli.js';
+import { realpathSync } from 'fs';
+import { pathToFileURL } from 'url';
 import type { AuditReport } from './types.js';
 
 const mockedWriteFileSync = vi.mocked(writeFileSync);
@@ -237,5 +239,47 @@ describe('run', () => {
     expect(code).toBe(1);
     const message = stderr.mock.calls.map((c) => String(c[0])).join('\n');
     expect(message).toMatch(/output/i);
+  });
+});
+
+describe('readPackageVersion', () => {
+  afterEach(() => {
+    mockedReadFileSync.mockReset();
+  });
+
+  it('returns the version from package.json', () => {
+    mockedReadFileSync.mockReturnValue('{"version":"1.2.3"}');
+    expect(readPackageVersion(new URL('file:///fake/package.json'))).toBe('1.2.3');
+  });
+
+  it('falls back to 0.0.0 when version field is missing', () => {
+    mockedReadFileSync.mockReturnValue('{}');
+    expect(readPackageVersion(new URL('file:///fake/package.json'))).toBe('0.0.0');
+  });
+
+  it('falls back to 0.0.0 when the file cannot be read', () => {
+    mockedReadFileSync.mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
+    expect(readPackageVersion(new URL('file:///missing/package.json'))).toBe('0.0.0');
+  });
+});
+
+describe('isMainModule', () => {
+  it('returns false when argv[1] is undefined', () => {
+    expect(isMainModule(undefined, 'file:///irrelevant.js')).toBe(false);
+  });
+
+  it('returns false when realpath cannot resolve argv[1]', () => {
+    expect(isMainModule('/no/such/file/anywhere', 'file:///irrelevant.js')).toBe(false);
+  });
+
+  it('returns true when argv[1] realpath matches the module URL', () => {
+    const realSelf = realpathSync(process.execPath);
+    expect(isMainModule(process.execPath, pathToFileURL(realSelf).href)).toBe(true);
+  });
+
+  it('returns false when argv[1] points to a different file than the module URL', () => {
+    expect(isMainModule(process.execPath, 'file:///some/other/path.js')).toBe(false);
   });
 });

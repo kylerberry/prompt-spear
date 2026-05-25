@@ -20,16 +20,16 @@ import { Command, InvalidArgumentError } from 'commander';
 // Read version from package.json at runtime so --version always matches the
 // installed package. Resolves from both src/cli.ts (tests) and dist/cli.js
 // (built binary) because both sit one directory deep alongside package.json.
-const PKG_VERSION = (() => {
+export function readPackageVersion(pkgUrl: URL): string {
   try {
-    const pkg = JSON.parse(
-      readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
-    ) as { version?: string };
+    const pkg = JSON.parse(readFileSync(pkgUrl, 'utf8')) as { version?: string };
     return pkg.version ?? '0.0.0';
   } catch {
     return '0.0.0';
   }
-})();
+}
+
+const PKG_VERSION = readPackageVersion(new URL('../package.json', import.meta.url));
 import { probes } from './probes/index.js';
 import { runProbes } from './runner.js';
 import type { EndpointAdapter, ProbeProgressCallback, RunErrorCallback } from './runner.js';
@@ -429,15 +429,20 @@ export async function run(argv: string[]): Promise<number> {
 // We compare realpaths because npm's bin shim invokes us via a symlink
 // (process.argv[1] is the symlink path); a naive string comparison against
 // import.meta.url would fail and the CLI would silently exit 0.
-function isMainModule(): boolean {
-  if (!process.argv[1]) return false;
+export function isMainModule(
+  argv1: string | undefined = process.argv[1],
+  moduleUrl: string = import.meta.url,
+): boolean {
+  if (!argv1) return false;
   try {
-    return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+    return realpathSync(argv1) === fileURLToPath(moduleUrl);
   } catch {
     return false;
   }
 }
 
+/* c8 ignore start */
 if (isMainModule()) {
   run(process.argv.slice(2)).then((code) => process.exit(code));
 }
+/* c8 ignore stop */
