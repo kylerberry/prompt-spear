@@ -13,7 +13,8 @@
  * `--help` is the primary documentation surface (PRD §CLI). Every flag below
  * is described with its type, default, and purpose.
  */
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, realpathSync, writeFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 import { Command, InvalidArgumentError } from 'commander';
 import { probes } from './probes/index.js';
 import { runProbes } from './runner.js';
@@ -410,6 +411,19 @@ export async function run(argv: string[]): Promise<number> {
 
 // True entry point — the only place that calls `process.exit`.
 // Guarded so importing this module (e.g. in tests) does not run an audit.
-if (import.meta.url === `file://${process.argv[1]}`) {
+//
+// We compare realpaths because npm's bin shim invokes us via a symlink
+// (process.argv[1] is the symlink path); a naive string comparison against
+// import.meta.url would fail and the CLI would silently exit 0.
+function isMainModule(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   run(process.argv.slice(2)).then((code) => process.exit(code));
 }

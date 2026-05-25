@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.1.2 — 2026-05-25
+
+### Fixed
+- **Critical:** `prompt-spear` binary silently exited with no output when invoked via `npm install` / `npx` / global bin shim. v0.1.0 and v0.1.1 were both affected — the ESM entry-point guard compared `import.meta.url` against `process.argv[1]` as raw strings, but npm's bin shim is a symlink so realpath resolution differed and the entry point never fired. Now uses `realpathSync` + `fileURLToPath` for correct comparison.
+
+### Added
+- Regression test (`src/__tests__/bin-entry.test.ts`) that symlink-invokes the built binary and asserts it produces output. Would have caught the above bug.
+
 ## v0.1.1 — 2026-05-24
 
 ### Changed
