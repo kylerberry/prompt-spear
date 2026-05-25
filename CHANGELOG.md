@@ -1,14 +1,12 @@
 # Changelog
 
-## v0.1.2 — 2026-05-24
+## Unreleased
 
 ### Added
 - Hero image at top of README (`docs/hero.webp`)
-
-## v0.1.1 — 2026-05-24
-
-### Added
 - Coverage badge in README (Coveralls)
+- CI workflow with lint + build + test + coverage upload (`.github/workflows/ci.yml`)
+- `test:coverage` script
 
 ## v0.1.0 — 2026-05-24
 

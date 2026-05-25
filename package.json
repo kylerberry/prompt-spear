@@ -1,6 +1,6 @@
 {
   "name": "prompt-spear",
-  "version": "0.1.2",
+  "version": "0.1.0",
   "description": "CLI tool that audits LLM endpoints against prompt injection and jailbreak attack categories.",
   "license": "MIT",
   "author": "Kyler Berry",
