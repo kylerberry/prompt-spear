@@ -175,4 +175,6 @@ npm run lint        # eslint over src/
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Apache 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+> Note: v0.1.0 was published under MIT. v0.1.1 and later are Apache 2.0. The license change does not affect rights for users who already obtained v0.1.0 under MIT — those rights remain irrevocable.

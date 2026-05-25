@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.1.1 — 2026-05-24
+
+### Changed
+- **License changed from MIT to Apache 2.0.** This adds an explicit patent grant from contributors and an explicit patent-retaliation clause — better suited to a security-testing tool with enterprise CI use. v0.1.0 remains under MIT; v0.1.1+ is Apache 2.0. Existing MIT rights for v0.1.0 are irrevocable.
+- New `NOTICE` file at repo root (Apache 2.0 §4(d) requirement).
+- `package.json` `license` field updated to `Apache-2.0` (SPDX identifier).
+- README license footer updated.
+
 ### Added
 - Hero image at top of README (`docs/hero.webp`)
 - Coverage badge in README (Coveralls)
