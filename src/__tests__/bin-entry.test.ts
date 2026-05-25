@@ -14,11 +14,12 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { execFileSync } from 'child_process';
-import { mkdtempSync, symlinkSync, existsSync, rmSync } from 'fs';
+import { mkdtempSync, symlinkSync, existsSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 
 const builtCli = resolve(__dirname, '..', '..', 'dist', 'cli.js');
+const pkgPath = resolve(__dirname, '..', '..', 'package.json');
 
 describe('bin entry point (symlink invocation)', () => {
   beforeAll(() => {
@@ -58,4 +59,13 @@ describe('bin entry point (symlink invocation)', () => {
     expect(stdout.length).toBeGreaterThan(0);
     expect(stdout).toMatch(/PASS|FAIL/);
   }, 30000);
+
+  it('--version prints the version from package.json', () => {
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { version: string };
+    const stdout = execFileSync(process.execPath, [builtCli, '--version'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    expect(stdout.trim(), 'CLI --version should equal package.json version').toBe(pkg.version);
+  }, 10000);
 });

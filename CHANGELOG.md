@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.1.3 — 2026-05-25
+
+### Fixed
+- `--version` printed hardcoded `0.0.0` instead of the actual package version. Now reads dynamically from `package.json` at module init using `import.meta.url`-based path resolution (works for both built binary and test import).
+
+### Added
+- Regression test in `bin-entry.test.ts` asserting `--version` output equals `package.json` version.
+
 ## v0.1.2 — 2026-05-25
 
 ### Fixed

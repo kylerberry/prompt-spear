@@ -16,6 +16,20 @@
 import { readFileSync, realpathSync, writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { Command, InvalidArgumentError } from 'commander';
+
+// Read version from package.json at runtime so --version always matches the
+// installed package. Resolves from both src/cli.ts (tests) and dist/cli.js
+// (built binary) because both sit one directory deep alongside package.json.
+const PKG_VERSION = (() => {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+    ) as { version?: string };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
 import { probes } from './probes/index.js';
 import { runProbes } from './runner.js';
 import type { EndpointAdapter, ProbeProgressCallback, RunErrorCallback } from './runner.js';
@@ -137,7 +151,7 @@ function buildProgram(): Command {
         'and prints a scored pass/fail report. Exit code is 0 when the overall\n' +
         'score meets the threshold, 1 when it does not — usable as a CI gate.',
     )
-    .version('0.0.0')
+    .version(PKG_VERSION)
     .option(
       '--endpoint <url>',
       'string — target URL of an OpenAI-compatible /chat/completions endpoint. ' +
