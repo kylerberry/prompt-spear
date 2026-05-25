@@ -37,12 +37,15 @@ describe('bin entry point (symlink invocation)', () => {
     symlinkSync(builtCli, symlinkPath);
 
     try {
-      const stdout = execFileSync(symlinkPath, ['--demo', 'hardened'], {
+      // Invoke the symlink via `node` rather than executing it directly. This
+      // still exercises the bin-shim regression (argv[1] is the symlink path
+      // while import.meta.url is the realpath — the original buggy string
+      // compare would still fail), but doesn't depend on `dist/cli.js` having
+      // the executable bit, which CI runners don't always preserve.
+      const stdout = execFileSync(process.execPath, [symlinkPath, '--demo', 'hardened'], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
       });
-      // If the entry guard is broken, stdout is empty and exit is 0.
-      // A real run prints the pretty report (which includes "Overall Score").
       expect(stdout.length, 'symlink-invoked binary should produce output').toBeGreaterThan(0);
       // Hardened demo runs at least one probe — any per-probe verdict line proves the pipeline ran.
       expect(stdout).toMatch(/PASS|FAIL/);
