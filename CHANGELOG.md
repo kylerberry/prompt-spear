@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.2 — 2026-05-24
+
+### Added
+- Hero image at top of README (`docs/hero.webp`)
+
 ## v0.1.1 — 2026-05-24
 
 ### Added
