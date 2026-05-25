@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { callWebhook, type WebhookConfig } from './webhook.js';
-import { EndpointError } from './endpoint.js';
 
 const baseConfig: WebhookConfig = {
   url: 'https://example.com/api/chat',

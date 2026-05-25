@@ -147,3 +147,4 @@ templates/payload.json
 
 # Audit output files
 *_audit.jsonnode-compile-cache/
+coverage/
