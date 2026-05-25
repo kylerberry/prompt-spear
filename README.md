@@ -1,5 +1,7 @@
 # prompt-spear
 
+[![Coverage Status](https://coveralls.io/repos/github/kylerberry/prompt-spear/badge.svg?branch=main)](https://coveralls.io/github/kylerberry/prompt-spear?branch=main)
+
 CLI tool that fires a curated battery of prompt injection probes at any LLM endpoint and returns a scored report. Exit code `0`/`1` makes it usable as a CI deployment gate.
 
 > **Status:** v0.1 — early release. Pattern-matching verdicts are stable and ready for CI use. An optional remote judge service (LLM-as-judge for nuanced verdicts) and a paid tier for targeted attacks are in development. The JSON output schema may gain fields in future versions; existing fields will not change without a major version bump.

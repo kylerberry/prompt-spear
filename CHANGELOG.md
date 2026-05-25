@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.1 — 2026-05-24
+
+### Added
+- Coverage badge in README (Coveralls)
+
 ## v0.1.0 — 2026-05-24
 
 Initial release.
